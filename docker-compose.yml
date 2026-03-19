@@ -1,0 +1,40 @@
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: f1
+      POSTGRES_PASSWORD: f1password
+      POSTGRES_DB: f1
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./migrations/001_init.sql:/docker-entrypoint-initdb.d/001_init.sql
+      - ./migrations/002_live_state.sql:/docker-entrypoint-initdb.d/002_live_state.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U f1"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  api:
+    build: .
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    environment:
+      DB_HOST: db
+      DB_PORT: 5432
+      DB_USER: f1
+      DB_PASSWORD: f1password
+      DB_NAME: f1
+      SERVER_PORT: 8080
+      # API_KEY: changeme          # uncomment to require auth
+      # ENABLE_INGESTOR: "true"    # uncomment during race weekends
+    depends_on:
+      db:
+        condition: service_healthy
+
+volumes:
+  pgdata:

@@ -10,19 +10,18 @@ import (
 	"syscall"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/go-chi/chi/v5/middleware"
+	chimiddleware "github.com/go-chi/chi/v5/middleware"
 	"github.com/joho/godotenv"
 
 	"github.com/calebbratton/f1-api/internal/config"
 	"github.com/calebbratton/f1-api/internal/db"
 	"github.com/calebbratton/f1-api/internal/handlers"
 	"github.com/calebbratton/f1-api/internal/ingestor"
+	"github.com/calebbratton/f1-api/internal/middleware"
 )
 
 func main() {
-	// Load .env if present (ignored if missing).
 	_ = godotenv.Load()
-
 	cfg := config.Load()
 
 	pool, err := db.Connect(cfg.DSN())
@@ -30,19 +29,21 @@ func main() {
 		log.Fatalf("database connection failed: %v", err)
 	}
 	defer pool.Close()
-
 	log.Println("connected to database")
 
-	// Start the live timing ingestor in the background.
-	// It connects to livetiming.formula1.com/signalr and persists
-	// every topic to the live_state table. Reconnects automatically.
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	ing := ingestor.New(pool)
-	go ing.Run(ctx)
+	// Start the live timing ingestor only when explicitly enabled.
+	// Outside of race weekends the stream is idle, so this is opt-in.
+	if cfg.EnableIngestor {
+		ing := ingestor.New(pool)
+		go ing.Run(ctx)
+		log.Println("live timing ingestor started")
+	} else {
+		log.Println("live timing ingestor disabled (set ENABLE_INGESTOR=true to enable)")
+	}
 
-	// Graceful shutdown on SIGINT / SIGTERM.
 	go func() {
 		quit := make(chan os.Signal, 1)
 		signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
@@ -52,9 +53,11 @@ func main() {
 	}()
 
 	r := chi.NewRouter()
-	r.Use(middleware.Logger)
-	r.Use(middleware.Recoverer)
-	r.Use(middleware.SetHeader("Content-Type", "application/json"))
+	r.Use(chimiddleware.Logger)
+	r.Use(chimiddleware.Recoverer)
+	r.Use(chimiddleware.SetHeader("Content-Type", "application/json"))
+	r.Use(middleware.RateLimit(cfg.RateLimitRPS, cfg.RateLimitBurst))
+	r.Use(middleware.APIKey(cfg.APIKey))
 
 	// Handlers
 	seasons := handlers.NewSeasonsHandler(pool)
@@ -70,23 +73,18 @@ func main() {
 		w.Write([]byte(`{"message":"F1 API","version":"1.0.0"}`))
 	})
 
-	// Seasons
 	r.Get("/seasons", seasons.List)
 
-	// Circuits
 	r.Get("/circuits", circuits.List)
 	r.Get("/circuits/{ref}", circuits.Get)
 
-	// Drivers
 	r.Get("/drivers", drivers.List)
 	r.Get("/drivers/{ref}", drivers.Get)
 	r.Get("/drivers/{ref}/results", results.GetByDriver)
 
-	// Constructors
 	r.Get("/constructors", constructors.List)
 	r.Get("/constructors/{ref}", constructors.Get)
 
-	// Races + results + standings (nested under season)
 	r.Route("/seasons/{season}", func(r chi.Router) {
 		r.Get("/races", races.ListBySeason)
 		r.Get("/races/{round}", races.GetRace)
@@ -95,7 +93,6 @@ func main() {
 		r.Get("/constructor-standings", standings.ConstructorStandings)
 	})
 
-	// Live timing (fed by the ingestor)
 	r.Route("/live", func(r chi.Router) {
 		r.Get("/", live.Index)
 		r.Get("/session", live.Session)
