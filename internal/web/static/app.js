@@ -56,6 +56,7 @@ async function loadPointsProgression() {
 
 function renderProgressionChart(d) {
   destroyChart('progression')
+  if (!d.race_names?.length) return
   const ctx = document.getElementById('chart-progression').getContext('2d')
   // Show top 10 drivers by final points.
   const sorted = [...d.drivers].sort((a, b) => {

@@ -1,10 +1,5 @@
 -- F1 API database schema
 
-CREATE TABLE IF NOT EXISTS seasons (
-    year  INT PRIMARY KEY,
-    url   TEXT
-);
-
 CREATE TABLE IF NOT EXISTS circuits (
     circuit_id  SERIAL PRIMARY KEY,
     ref         VARCHAR(100) UNIQUE NOT NULL,
@@ -38,7 +33,7 @@ CREATE TABLE IF NOT EXISTS drivers (
 
 CREATE TABLE IF NOT EXISTS races (
     race_id     SERIAL PRIMARY KEY,
-    season      INT NOT NULL REFERENCES seasons(year),
+    season      INT NOT NULL,
     round       INT NOT NULL,
     circuit_id  INT NOT NULL REFERENCES circuits(circuit_id),
     name        VARCHAR(255) NOT NULL,
@@ -66,29 +61,8 @@ CREATE TABLE IF NOT EXISTS results (
     fastest_lap_speed   VARCHAR(20)
 );
 
-CREATE TABLE IF NOT EXISTS driver_standings (
-    standing_id  SERIAL PRIMARY KEY,
-    race_id      INT NOT NULL REFERENCES races(race_id),
-    driver_id    INT NOT NULL REFERENCES drivers(driver_id),
-    points       NUMERIC(7, 2) NOT NULL DEFAULT 0,
-    position     INT NOT NULL,
-    wins         INT NOT NULL DEFAULT 0,
-    UNIQUE (race_id, driver_id)
-);
-
-CREATE TABLE IF NOT EXISTS constructor_standings (
-    standing_id     SERIAL PRIMARY KEY,
-    race_id         INT NOT NULL REFERENCES races(race_id),
-    constructor_id  INT NOT NULL REFERENCES constructors(constructor_id),
-    points          NUMERIC(7, 2) NOT NULL DEFAULT 0,
-    position        INT NOT NULL,
-    wins            INT NOT NULL DEFAULT 0,
-    UNIQUE (race_id, constructor_id)
-);
-
 -- Indexes for common query patterns
 CREATE INDEX IF NOT EXISTS idx_races_season ON races(season);
 CREATE INDEX IF NOT EXISTS idx_results_race ON results(race_id);
 CREATE INDEX IF NOT EXISTS idx_results_driver ON results(driver_id);
-CREATE INDEX IF NOT EXISTS idx_driver_standings_race ON driver_standings(race_id);
-CREATE INDEX IF NOT EXISTS idx_constructor_standings_race ON constructor_standings(race_id);
+CREATE INDEX IF NOT EXISTS idx_results_constructor ON results(constructor_id);

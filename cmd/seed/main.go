@@ -39,7 +39,6 @@ type mrData struct {
 	ConstructorTable *constructorTable `json:"ConstructorTable"`
 	DriverTable    *driverTable    `json:"DriverTable"`
 	RaceTable      *raceTable      `json:"RaceTable"`
-	StandingsTable *standingsTable `json:"StandingsTable"`
 }
 
 type apiResponse struct {
@@ -124,27 +123,6 @@ type avgSpeed struct {
 	Speed string `json:"speed"`
 }
 
-type standingsTable struct {
-	StandingsLists []standingsList `json:"StandingsLists"`
-}
-type standingsList struct {
-	Season           string                 `json:"season"`
-	Round            string                 `json:"round"`
-	DriverStandings  []driverStanding       `json:"DriverStandings"`
-	ConstructorStandings []constructorStanding `json:"ConstructorStandings"`
-}
-type driverStanding struct {
-	Position string        `json:"position"`
-	Points   string        `json:"points"`
-	Wins     string        `json:"wins"`
-	Driver   jolpicaDriver `json:"Driver"`
-}
-type constructorStanding struct {
-	Position    string             `json:"position"`
-	Points      string             `json:"points"`
-	Wins        string             `json:"wins"`
-	Constructor jolpicaConstructor `json:"Constructor"`
-}
 
 // ── main ─────────────────────────────────────────────────────────────────────
 
@@ -186,6 +164,7 @@ func main() {
 		if err := s.importSeason(year); err != nil {
 			log.Printf("  season %d error: %v (skipping)", year, err)
 		}
+		time.Sleep(1 * time.Second)
 	}
 
 	log.Println("done.")
@@ -197,19 +176,30 @@ type seeder struct {
 	db *pgxpool.Pool
 }
 
-// get fetches a paginated Jolpica endpoint, merging all pages.
+// get fetches a paginated Jolpica endpoint, retrying on rate-limit responses.
 func get(path string, limit, offset int) (*mrData, error) {
 	url := fmt.Sprintf("%s%s?limit=%d&offset=%d", jolpicaBase, path, limit, offset)
-	resp, err := httpClient.Get(url)
-	if err != nil {
-		return nil, err
+	delays := []time.Duration{2 * time.Second, 5 * time.Second, 10 * time.Second}
+	for attempt, maxAttempts := 0, len(delays)+1; attempt < maxAttempts; attempt++ {
+		resp, err := httpClient.Get(url)
+		if err != nil {
+			return nil, err
+		}
+		var r apiResponse
+		decErr := json.NewDecoder(resp.Body).Decode(&r)
+		resp.Body.Close()
+		if decErr == nil {
+			return &r.MRData, nil
+		}
+		// Non-JSON response (HTML rate-limit page). Back off and retry.
+		if attempt < len(delays) {
+			log.Printf("  rate limited on %s, retrying in %v...", path, delays[attempt])
+			time.Sleep(delays[attempt])
+		} else {
+			return nil, decErr
+		}
 	}
-	defer resp.Body.Close()
-	var r apiResponse
-	if err := json.NewDecoder(resp.Body).Decode(&r); err != nil {
-		return nil, err
-	}
-	return &r.MRData, nil
+	return nil, fmt.Errorf("unreachable")
 }
 
 // getAll handles pagination automatically, calling visit for each page.
@@ -302,43 +292,38 @@ func (s *seeder) importDrivers() error {
 }
 
 func (s *seeder) importSeason(year int) error {
-	// Ensure the season row exists.
-	_, err := s.db.Exec(context.Background(), `
-		INSERT INTO seasons (year) VALUES ($1) ON CONFLICT DO NOTHING
-	`, year)
-	if err != nil {
-		return err
-	}
-
-	// Fetch all races for the season (results embedded).
-	data, err := get(fmt.Sprintf("/%d/results", year), 1000, 0)
-	if err != nil {
+	// Fetch the race schedule for the season (small, always fits in one page).
+	var allRaces []jolpicaRace
+	if err := getAll(fmt.Sprintf("/%d/races", year), func(d *mrData) error {
+		if d.RaceTable != nil {
+			allRaces = append(allRaces, d.RaceTable.Races...)
+		}
+		return nil
+	}); err != nil {
 		return fmt.Errorf("fetch races: %w", err)
 	}
-	if data.RaceTable == nil {
-		return nil
-	}
 
-	for _, race := range data.RaceTable.Races {
-		time.Sleep(150 * time.Millisecond)
-
+	for _, race := range allRaces {
 		raceID, err := s.upsertRace(year, race)
 		if err != nil {
 			log.Printf("  round %s: %v", race.Round, err)
 			continue
 		}
-		if err := s.importResults(raceID, race.Results); err != nil {
-			log.Printf("  round %s results: %v", race.Round, err)
+
+		// Fetch results for this specific round (avoids pagination issues).
+		time.Sleep(500 * time.Millisecond)
+		rdata, err := get(fmt.Sprintf("/%d/%s/results", year, race.Round), 100, 0)
+		if err != nil {
+			log.Printf("  round %s results fetch: %v", race.Round, err)
+			continue
+		}
+		if rdata.RaceTable != nil && len(rdata.RaceTable.Races) > 0 {
+			if err := s.importResults(raceID, rdata.RaceTable.Races[0].Results); err != nil {
+				log.Printf("  round %s results: %v", race.Round, err)
+			}
 		}
 	}
 
-	// Import final standings for the season.
-	if err := s.importDriverStandings(year); err != nil {
-		log.Printf("  driver standings %d: %v", year, err)
-	}
-	if err := s.importConstructorStandings(year); err != nil {
-		log.Printf("  constructor standings %d: %v", year, err)
-	}
 	return nil
 }
 
@@ -417,81 +402,6 @@ func (s *seeder) importResults(raceID int, results []jolpicaResult) error {
 	return nil
 }
 
-func (s *seeder) importDriverStandings(year int) error {
-	data, err := get(fmt.Sprintf("/%d/driverStandings", year), 100, 0)
-	if err != nil || data.StandingsTable == nil || len(data.StandingsTable.StandingsLists) == 0 {
-		return err
-	}
-	list := data.StandingsTable.StandingsLists[0]
-
-	var raceID int
-	round, _ := strconv.Atoi(list.Round)
-	if err := s.db.QueryRow(context.Background(),
-		`SELECT race_id FROM races WHERE season=$1 AND round=$2`, year, round,
-	).Scan(&raceID); err != nil {
-		return fmt.Errorf("race not found for standings: %w", err)
-	}
-
-	for _, st := range list.DriverStandings {
-		var driverID int
-		if err := s.db.QueryRow(context.Background(),
-			`SELECT driver_id FROM drivers WHERE ref=$1`, st.Driver.DriverID,
-		).Scan(&driverID); err != nil {
-			continue
-		}
-		pos, _ := strconv.Atoi(st.Position)
-		pts, _ := strconv.ParseFloat(st.Points, 64)
-		wins, _ := strconv.Atoi(st.Wins)
-		_, err := s.db.Exec(context.Background(), `
-			INSERT INTO driver_standings (race_id, driver_id, points, position, wins)
-			VALUES ($1,$2,$3,$4,$5)
-			ON CONFLICT (race_id, driver_id) DO UPDATE
-			  SET points=$3, position=$4, wins=$5
-		`, raceID, driverID, pts, pos, wins)
-		if err != nil {
-			log.Printf("    driver standing %s: %v", st.Driver.DriverID, err)
-		}
-	}
-	return nil
-}
-
-func (s *seeder) importConstructorStandings(year int) error {
-	data, err := get(fmt.Sprintf("/%d/constructorStandings", year), 100, 0)
-	if err != nil || data.StandingsTable == nil || len(data.StandingsTable.StandingsLists) == 0 {
-		return err
-	}
-	list := data.StandingsTable.StandingsLists[0]
-
-	var raceID int
-	round, _ := strconv.Atoi(list.Round)
-	if err := s.db.QueryRow(context.Background(),
-		`SELECT race_id FROM races WHERE season=$1 AND round=$2`, year, round,
-	).Scan(&raceID); err != nil {
-		return fmt.Errorf("race not found for constructor standings: %w", err)
-	}
-
-	for _, st := range list.ConstructorStandings {
-		var constructorID int
-		if err := s.db.QueryRow(context.Background(),
-			`SELECT constructor_id FROM constructors WHERE ref=$1`, st.Constructor.ConstructorID,
-		).Scan(&constructorID); err != nil {
-			continue
-		}
-		pos, _ := strconv.Atoi(st.Position)
-		pts, _ := strconv.ParseFloat(st.Points, 64)
-		wins, _ := strconv.Atoi(st.Wins)
-		_, err := s.db.Exec(context.Background(), `
-			INSERT INTO constructor_standings (race_id, constructor_id, points, position, wins)
-			VALUES ($1,$2,$3,$4,$5)
-			ON CONFLICT (race_id, constructor_id) DO UPDATE
-			  SET points=$3, position=$4, wins=$5
-		`, raceID, constructorID, pts, pos, wins)
-		if err != nil {
-			log.Printf("    constructor standing %s: %v", st.Constructor.ConstructorID, err)
-		}
-	}
-	return nil
-}
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 

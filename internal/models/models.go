@@ -3,8 +3,7 @@ package models
 import "time"
 
 type Season struct {
-	Year int    `json:"year"`
-	URL  string `json:"url,omitempty"`
+	Year int `json:"year"`
 }
 
 type Circuit struct {
@@ -67,17 +66,13 @@ type Result struct {
 }
 
 type DriverStanding struct {
-	StandingID  int           `json:"standing_id"`
-	Race        RaceRef       `json:"race"`
-	Driver      DriverRef     `json:"driver"`
-	Points      float64       `json:"points"`
-	Position    int           `json:"position"`
-	Wins        int           `json:"wins"`
+	Driver   DriverRef `json:"driver"`
+	Points   float64   `json:"points"`
+	Position int       `json:"position"`
+	Wins     int       `json:"wins"`
 }
 
 type ConstructorStanding struct {
-	StandingID  int            `json:"standing_id"`
-	Race        RaceRef        `json:"race"`
 	Constructor ConstructorRef `json:"constructor"`
 	Points      float64        `json:"points"`
 	Position    int            `json:"position"`

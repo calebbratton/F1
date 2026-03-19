@@ -63,8 +63,8 @@ func (h *StatsHandler) PointsProgression(w http.ResponseWriter, r *http.Request)
 		Points []float64 `json:"points"`
 	}
 
-	var rounds []int
-	var raceNames []string
+	rounds := []int{}
+	raceNames := []string{}
 	driverOrder := []string{}
 	driverMap := map[string]*series{}
 	roundSeen := map[int]bool{}

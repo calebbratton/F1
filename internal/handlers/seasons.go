@@ -19,7 +19,7 @@ func NewSeasonsHandler(db *pgxpool.Pool) *SeasonsHandler {
 
 func (h *SeasonsHandler) List(w http.ResponseWriter, r *http.Request) {
 	rows, err := h.db.Query(context.Background(), `
-		SELECT year, url FROM seasons ORDER BY year DESC
+		SELECT DISTINCT season FROM races ORDER BY season DESC
 	`)
 	if err != nil {
 		respondError(w, http.StatusInternalServerError, "failed to query seasons")
@@ -30,7 +30,7 @@ func (h *SeasonsHandler) List(w http.ResponseWriter, r *http.Request) {
 	seasons := []models.Season{}
 	for rows.Next() {
 		var s models.Season
-		if err := rows.Scan(&s.Year, &s.URL); err != nil {
+		if err := rows.Scan(&s.Year); err != nil {
 			respondError(w, http.StatusInternalServerError, "failed to scan season")
 			return
 		}
