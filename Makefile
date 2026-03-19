@@ -8,9 +8,10 @@ run:
 build:
 	go build -o bin/f1-api ./cmd/api
 
-## Apply database migrations (requires psql and DB_* env vars or .env)
+## Apply database migrations (requires psql and DSN env var or .env)
 migrate:
 	psql "$(DSN)" -f migrations/001_init.sql
+	psql "$(DSN)" -f migrations/002_live_state.sql
 
 ## Load example seed data
 seed:
