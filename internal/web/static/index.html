@@ -1,0 +1,187 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>F1 Dashboard</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
+  <style>
+    :root {
+      --f1-red:  #e10600;
+      --f1-dark: #15151e;
+      --f1-card: #1e1e2e;
+      --f1-border: #2e2e3e;
+    }
+    body { background: var(--f1-dark); color: #fff; font-family: 'Segoe UI', system-ui, sans-serif; }
+    .card { background: var(--f1-card); border: 1px solid var(--f1-border); border-radius: 12px; padding: 1.25rem; }
+    .tab-btn { padding: .5rem 1.25rem; border-radius: 8px; font-weight: 600; font-size: .875rem;
+               cursor: pointer; transition: all .15s; color: #9ca3af; background: transparent; border: none; }
+    .tab-btn.active { background: var(--f1-red); color: #fff; }
+    .tab-btn:hover:not(.active) { color: #fff; background: var(--f1-border); }
+    .f1-input { background: #2a2a3e; border: 1px solid var(--f1-border); color: #fff;
+                border-radius: 8px; padding: .4rem .75rem; font-size: .875rem; outline: none; }
+    .f1-input:focus { border-color: var(--f1-red); }
+    .f1-btn { background: var(--f1-red); color: #fff; border: none; border-radius: 8px;
+              padding: .4rem 1rem; font-weight: 600; font-size: .875rem; cursor: pointer; }
+    .f1-btn:hover { opacity: .85; }
+    .stat-box { text-align: center; background: #2a2a3e; border-radius: 10px; padding: .875rem; }
+    .stat-value { font-size: 1.75rem; font-weight: 800; line-height: 1; }
+    .stat-label { font-size: .75rem; color: #9ca3af; margin-top: .25rem; text-transform: uppercase; letter-spacing: .05em; }
+    .heatmap-cell { width: 28px; height: 28px; border-radius: 4px; display: inline-block;
+                    font-size: 9px; text-align: center; line-height: 28px; font-weight: 700; }
+    .live-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+    .pulse { animation: pulse 2s infinite; }
+    @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: .4; } }
+    canvas { max-width: 100%; }
+    .section { display: none; }
+    .section.active { display: block; }
+    .timing-row:nth-child(odd) { background: #22223a; }
+    table { border-collapse: collapse; width: 100%; }
+    th { color: #9ca3af; font-size: .75rem; text-transform: uppercase; letter-spacing: .05em;
+         padding: .5rem .75rem; text-align: left; border-bottom: 1px solid var(--f1-border); }
+    td { padding: .5rem .75rem; font-size: .875rem; border-bottom: 1px solid #2a2a3a; }
+  </style>
+</head>
+<body class="min-h-screen">
+
+  <!-- Header -->
+  <header class="flex items-center gap-4 px-6 py-4 border-b" style="border-color:var(--f1-border)">
+    <div class="w-8 h-8 rounded" style="background:var(--f1-red)"></div>
+    <h1 class="text-xl font-black tracking-tight">F1 DASHBOARD</h1>
+    <div id="live-badge" class="hidden flex items-center gap-2 ml-auto px-3 py-1 rounded-full text-xs font-bold"
+         style="background:#1a2a1a; color:#4ade80; border:1px solid #4ade80">
+      <span class="live-dot pulse" style="background:#4ade80"></span> LIVE
+    </div>
+  </header>
+
+  <!-- Tabs -->
+  <nav class="flex gap-2 px-6 pt-4 pb-0">
+    <button class="tab-btn active" onclick="showTab('season')">Season</button>
+    <button class="tab-btn" onclick="showTab('driver')">Driver</button>
+    <button class="tab-btn" onclick="showTab('h2h')">Head‑to‑Head</button>
+    <button class="tab-btn" onclick="showTab('circuit')">Circuit</button>
+    <button class="tab-btn" onclick="showTab('grid')">Grid vs Finish</button>
+    <button class="tab-btn" onclick="showTab('live')">Live</button>
+  </nav>
+
+  <main class="px-6 py-5 space-y-5">
+
+    <!-- ── SEASON TAB ── -->
+    <div id="tab-season" class="section active space-y-5">
+      <div class="card">
+        <div class="flex flex-wrap items-center gap-3 mb-5">
+          <h2 class="font-bold text-lg flex-1">Championship Points Progression</h2>
+          <input id="pp-season" type="number" class="f1-input w-28" value="2024" min="1950" max="2025" />
+          <button class="f1-btn" onclick="loadPointsProgression()">Load</button>
+        </div>
+        <canvas id="chart-progression" height="90"></canvas>
+      </div>
+
+      <div class="card">
+        <div class="flex flex-wrap items-center gap-3 mb-5">
+          <h2 class="font-bold text-lg flex-1">Constructor Dominance</h2>
+          <label class="text-sm text-gray-400">From</label>
+          <input id="cw-from" type="number" class="f1-input w-24" value="2010" min="1950" />
+          <label class="text-sm text-gray-400">To</label>
+          <input id="cw-to" type="number" class="f1-input w-24" value="2024" max="2025" />
+          <button class="f1-btn" onclick="loadConstructorWins()">Load</button>
+        </div>
+        <canvas id="chart-constructor-wins" height="80"></canvas>
+      </div>
+    </div>
+
+    <!-- ── DRIVER TAB ── -->
+    <div id="tab-driver" class="section space-y-5">
+      <div class="card">
+        <div class="flex flex-wrap items-center gap-3 mb-5">
+          <h2 class="font-bold text-lg flex-1">Driver Career Arc</h2>
+          <input id="career-ref" type="text" class="f1-input w-40" placeholder="e.g. hamilton" />
+          <button class="f1-btn" onclick="loadCareer()">Load</button>
+        </div>
+        <div id="career-name" class="text-sm text-gray-400 mb-3"></div>
+        <canvas id="chart-career" height="80"></canvas>
+      </div>
+    </div>
+
+    <!-- ── HEAD TO HEAD TAB ── -->
+    <div id="tab-h2h" class="section space-y-5">
+      <div class="card">
+        <div class="flex flex-wrap items-center gap-3 mb-6">
+          <h2 class="font-bold text-lg flex-1">Head‑to‑Head</h2>
+          <input id="h2h-d1" type="text" class="f1-input w-36" placeholder="Driver 1 (e.g. hamilton)" />
+          <span class="text-gray-400 font-bold">vs</span>
+          <input id="h2h-d2" type="text" class="f1-input w-36" placeholder="Driver 2 (e.g. verstappen)" />
+          <input id="h2h-season" type="number" class="f1-input w-24" placeholder="Season (opt.)" />
+          <button class="f1-btn" onclick="loadH2H()">Compare</button>
+        </div>
+        <div id="h2h-content" class="hidden space-y-6">
+          <div id="h2h-names" class="flex justify-between text-lg font-bold mb-1">
+            <span id="h2h-name1"></span><span id="h2h-name2"></span>
+          </div>
+          <div id="h2h-stats" class="grid grid-cols-2 md:grid-cols-4 gap-3"></div>
+          <canvas id="chart-h2h" height="60"></canvas>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── CIRCUIT TAB ── -->
+    <div id="tab-circuit" class="section space-y-5">
+      <div class="card">
+        <div class="flex flex-wrap items-center gap-3 mb-5">
+          <h2 class="font-bold text-lg flex-1">Circuit Form Guide</h2>
+          <input id="circuit-ref" type="text" class="f1-input w-40" placeholder="e.g. monza" />
+          <button class="f1-btn" onclick="loadCircuitForm()">Load</button>
+        </div>
+        <div id="circuit-name" class="text-sm text-gray-400 mb-3"></div>
+        <div id="circuit-table"></div>
+      </div>
+    </div>
+
+    <!-- ── GRID VS FINISH TAB ── -->
+    <div id="tab-grid" class="section">
+      <div class="card">
+        <div class="flex flex-wrap items-center gap-3 mb-5">
+          <h2 class="font-bold text-lg flex-1">Grid vs Finish Heatmap</h2>
+          <input id="gvf-season" type="number" class="f1-input w-28" placeholder="Season (opt.)" />
+          <button class="f1-btn" onclick="loadGridVsFinish()">Load</button>
+        </div>
+        <p class="text-xs text-gray-500 mb-4">Darker red = more common outcome. Diagonal = started and finished the same position.</p>
+        <div id="heatmap-container" class="overflow-x-auto"></div>
+      </div>
+    </div>
+
+    <!-- ── LIVE TAB ── -->
+    <div id="tab-live" class="section space-y-5">
+      <div class="grid grid-cols-1 lg:grid-cols-2 gap-5">
+        <!-- Track Map -->
+        <div class="card">
+          <div class="flex items-center gap-2 mb-4">
+            <h2 class="font-bold text-lg">Track Map</h2>
+            <span class="text-xs text-gray-500">(updates during sessions)</span>
+          </div>
+          <canvas id="track-canvas" width="500" height="400" style="width:100%;border-radius:8px;background:#0a0a14"></canvas>
+        </div>
+        <!-- Timing Tower -->
+        <div class="card">
+          <h2 class="font-bold text-lg mb-4">Timing Tower</h2>
+          <div id="timing-tower" class="overflow-auto" style="max-height:400px"></div>
+        </div>
+      </div>
+      <!-- Gap Chart -->
+      <div class="card">
+        <h2 class="font-bold text-lg mb-4">Live Gap Chart</h2>
+        <canvas id="chart-gap" height="70"></canvas>
+      </div>
+      <!-- Race Control -->
+      <div class="card">
+        <h2 class="font-bold text-lg mb-3">Race Control</h2>
+        <div id="race-control" class="space-y-2 text-sm"></div>
+      </div>
+    </div>
+
+  </main>
+
+  <script src="/dashboard/app.js"></script>
+</body>
+</html>
